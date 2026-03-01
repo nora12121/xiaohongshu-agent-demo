@@ -8,6 +8,13 @@ st.set_page_config(
     layout="wide"
 )
 
+# ========== 免费体验次数限制 ==========
+FREE_USAGE_LIMIT = 3
+
+# 初始化 session_state 计数器
+if "free_usage_count" not in st.session_state:
+    st.session_state.free_usage_count = 0
+
 # System Prompt
 SYSTEM_PROMPT = """你现在是小红书最顶级的商业化内容编导，深谙小红书的"网感"、流量密码以及去中心化分发机制。你的专长是帮博主把"生硬的甲方广告"化骨绵掌般地揉进"高赞爆款笔记"中，做到"恰饭于无形"，既让金主爸爸满意转化率，又绝对不引起粉丝反感。
 你需要输出一份完整的小红书商单策划案，严格遵循以下结构：
@@ -38,6 +45,32 @@ st.markdown("""
         color: white !important;
     }
     
+    /* 侧边栏输入框特殊处理 - 覆盖白色文字 */
+    [data-testid="stSidebar"] input,
+    [data-testid="stSidebar"] textarea,
+    [data-testid="stSidebar"] [data-baseweb="select"] *,
+    [data-testid="stSidebar"] [data-baseweb="input"] *,
+    [data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] span,
+    [data-testid="stSidebar"] .stSelectbox svg {
+        color: #333333 !important;
+        -webkit-text-fill-color: #333333 !important;
+    }
+    
+    [data-testid="stSidebar"] input,
+    [data-testid="stSidebar"] textarea,
+    [data-testid="stSidebar"] [data-baseweb="select"] > div {
+        background-color: #ffffff !important;
+    }
+    
+    /* 侧边栏下拉菜单选项 */
+    [data-baseweb="popover"] li,
+    [data-baseweb="popover"] ul,
+    [data-baseweb="menu"] * {
+        color: #333333 !important;
+        -webkit-text-fill-color: #333333 !important;
+        background-color: #ffffff !important;
+    }
+    
     /* 主标题样式 */
     .main-title {
         font-size: 2.5rem;
@@ -55,6 +88,31 @@ st.markdown("""
         font-size: 1rem;
         font-weight: 600;
         color: #5a4a4a !important;
+    }
+    
+    /* 输入框内容样式 - 修复白底白字问题 */
+    .stTextInput input, .stTextArea textarea {
+        color: #333333 !important;
+        background-color: #ffffff !important;
+        border: 1px solid #e0e0e0 !important;
+        border-radius: 8px !important;
+    }
+    
+    .stTextInput input:focus, .stTextArea textarea:focus {
+        border-color: #ff8a9b !important;
+        box-shadow: 0 0 0 1px #ff8a9b !important;
+    }
+    
+    /* 输入框占位符样式 */
+    .stTextInput input::placeholder, .stTextArea textarea::placeholder {
+        color: #999999 !important;
+        opacity: 0.7 !important;
+    }
+    
+    /* 下拉选择框样式 */
+    .stSelectbox > div > div {
+        background-color: #ffffff !important;
+        color: #333333 !important;
     }
     
     /* 按钮样式 */
@@ -200,19 +258,19 @@ with col_left:
     
     blogger_persona = st.text_input(
         "👤 博主人设/赛道",
-        value="鸭轩的AI厨房，主打高科技与烟火气的结合",
+        placeholder="例如：职场干货博主，主打向上管理与高效工作",
         help="描述你的账号定位和内容风格"
     )
     
     note_topic = st.text_input(
         "📝 本期笔记主题",
-        value="沉浸式制作春日限定樱花麻薯",
+        placeholder="例如：如何高情商拒绝老板的周末加班要求",
         help="这期内容你想做什么主题"
     )
     
     product_info = st.text_area(
         "🛍️ 甲方产品及核心卖点",
-        value="某品牌静音破壁机，卖点是静音不吵室友、打粉细腻无渣",
+        placeholder="例如：某品牌护腰人体工学椅，卖点是分区支撑、久坐不腰疼",
         height=120,
         help="详细描述要植入的产品及其卖点"
     )
@@ -226,10 +284,40 @@ with col_right:
     st.markdown("---")
     
     if generate_btn:
-        # 检查 API Key
-        if not api_key or api_key.strip() == "":
-            st.warning("请先在左侧输入你的 API Key 哦～")
+        # 检查必填项
+        if not blogger_persona.strip() or not note_topic.strip() or not product_info.strip():
+            st.warning("请填写完整的创作信息哦～博主人设、笔记主题、产品卖点都不能为空 ✍️")
         else:
+            # ========== 双轨制 API Key 逻辑 ==========
+            use_free_key = False  # 标记是否使用免费备用 Key
+            final_api_key = None
+            
+            # 判断使用哪个 Key
+            if api_key and api_key.strip():
+                # 用户手动输入了 Key，直接使用（无次数限制）
+                final_api_key = api_key.strip()
+                use_free_key = False
+            else:
+                # 用户没输入 Key，尝试使用备用 Key
+                try:
+                    fallback_key = st.secrets.get("DASHSCOPE_API_KEY", "")
+                    if fallback_key:
+                        # 检查免费次数是否已用完
+                        if st.session_state.free_usage_count >= FREE_USAGE_LIMIT:
+                            st.error(f"💡 演示专属的免费体验次数（{FREE_USAGE_LIMIT}/{FREE_USAGE_LIMIT}）已用完啦！如果想继续探索，请在左侧输入您自己的 API Key 哦～")
+                            st.stop()
+                        else:
+                            final_api_key = fallback_key
+                            use_free_key = True
+                            remaining = FREE_USAGE_LIMIT - st.session_state.free_usage_count
+                            st.info(f"🎁 正在使用免费体验额度，剩余 {remaining} 次")
+                    else:
+                        st.warning("请先在左侧输入你的 API Key 哦～")
+                        st.stop()
+                except Exception:
+                    st.warning("请先在左侧输入你的 API Key 哦～")
+                    st.stop()
+            
             # 拼装用户消息
             user_message = f"""博主人设：{blogger_persona}
 笔记主题：{note_topic}
@@ -239,34 +327,49 @@ with col_right:
                 # 获取当前选择的服务商配置
                 provider_config = API_PROVIDERS[api_provider]
                 
+                # 如果使用免费 Key，强制使用阿里云百炼配置
+                if use_free_key:
+                    api_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+                    api_model = "qwen-plus"
+                else:
+                    api_base_url = provider_config["base_url"]
+                    api_model = provider_config["model"]
+                
                 # 初始化 OpenAI 客户端
                 client = OpenAI(
-                    api_key=api_key,
-                    base_url=provider_config["base_url"]
+                    api_key=final_api_key,
+                    base_url=api_base_url
                 )
                 
-                # 调用 API（流式输出）
+                # 调用 API（非流式，确保拿到完整回复后再展示）
                 with st.spinner("🧠 AI 正在疯狂燃烧脑细胞拼凑网感..."):
                     response = client.chat.completions.create(
-                        model=provider_config["model"],
+                        model=api_model,
                         messages=[
                             {"role": "system", "content": SYSTEM_PROMPT},
                             {"role": "user", "content": user_message}
                         ],
-                        stream=True
+                        max_tokens=8192,
+                        stream=False
                     )
                 
-                # 流式输出结果
-                result_placeholder = st.empty()
-                full_response = ""
+                # 取完整回复内容并展示
+                full_response = response.choices[0].message.content or ""
                 
-                for chunk in response:
-                    if chunk.choices[0].delta.content is not None:
-                        full_response += chunk.choices[0].delta.content
-                        result_placeholder.markdown(full_response)
-                
-                # 输出完成后的提示
-                st.success("✅ 方案生成完成！")
+                if full_response.strip():
+                    st.markdown(full_response)
+                    st.success("✅ 方案生成完成！")
+                    
+                    # 如果使用的是免费 Key，成功后计数器 +1
+                    if use_free_key:
+                        st.session_state.free_usage_count += 1
+                        remaining = FREE_USAGE_LIMIT - st.session_state.free_usage_count
+                        if remaining > 0:
+                            st.caption(f"🎁 免费体验剩余 {remaining} 次")
+                        else:
+                            st.caption(f"🎁 免费体验次数已用完，下次使用请输入您自己的 API Key")
+                else:
+                    st.warning("⚠️ 模型返回内容为空，请重试或更换模型。")
                 
             except Exception as e:
                 st.error(f"❌ API 调用出错：{str(e)}")
